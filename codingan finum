@@ -1,0 +1,78 @@
+import RPi.GPIO as GPIO
+import requests
+import time
+
+# Define GPIO pins for the relays
+RELAY_PINS = [17, 18, 27, 22, 23, 24]  # Adjust these pins as per your wiring
+PIR_PIN = 4  # Change this to the GPIO pin connected to the OUT pin of the PIR sensor
+
+# Set up GPIO mode and initial relay states
+GPIO.setmode(GPIO.BCM)
+for pin in RELAY_PINS:
+    GPIO.setup(pin, GPIO.OUT)
+    GPIO.output(pin, GPIO.HIGH)  # Set to HIGH for active LOW relays
+GPIO.setup(PIR_PIN, GPIO.IN)
+
+# Function to control the relays based on the digit values
+def control_relays(digit_values):
+    for i, value in enumerate(digit_values):
+        if value == '2':
+            GPIO.output(RELAY_PINS[i], GPIO.LOW)  # Set to LOW for active LOW relays
+        elif value == '1':
+            GPIO.output(RELAY_PINS[i], GPIO.HIGH)  # Set to HIGH for active LOW relays
+
+# Initialize motion detection counter
+motion_counter = 0
+max_motion_counter = 10  # Maximum number of times to detect motion before turning off
+
+# Flag to track if relays were turned on due to motion
+relays_turned_on = False
+
+# Main loop
+while True:
+    try:
+        print("Fetching relay status...")
+        response = requests.get("https://gpstracklimbungan.site/MAN4/smart_room/switchroom.php")
+        if response.status_code == 200:
+            relay_status = response.text.strip()
+            if len(relay_status) == 6:
+                
+                print("Relay status:", relay_status)
+                control_relays(relay_status)
+            else:
+                print("Invalid relay status format!")
+
+        print("Reading PIR sensor...")
+        pir_sensor_detected = GPIO.input(PIR_PIN) == GPIO.HIGH
+
+        # Check if PIR sensor detected people
+        if pir_sensor_detected:
+            print("Motion detected! Turning on fan1, fan2, lamp1, and lamp2 relays.")
+            print("Sending request to turn ON relays in remote database...")
+            requests.get("https://gpstracklimbungan.site/MAN4/smart_room/autoswitchroom.php?force=2")
+            if not relays_turned_on:
+                control_relays("220000")
+                motion_counter = 0  # Reset the motion counter
+                relays_turned_on = True
+        else:
+            motion_counter += 1
+            print("no motion detected")
+            if motion_counter >= max_motion_counter:
+                if relays_turned_on:
+                    print("No motion detected for", max_motion_counter, "times. Turning off all relays.")
+                    control_relays("111111")  # Keep relays in the same state
+
+                    print("Sending request to turn off relays in remote database...")
+                    requests.get("https://gpstracklimbungan.site/MAN4/smart_room/autoswitchroom.php?force=1")
+                    relays_turned_on = False
+
+        # Wait for a while before checking again
+        time.sleep(1)
+
+    except KeyboardInterrupt:
+        break
+    except Exception as e:
+        print("An error occurred:", e)
+
+# Clean up GPIO on program exit
+GPIO.cleanup()
